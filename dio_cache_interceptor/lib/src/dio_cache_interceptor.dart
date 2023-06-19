@@ -30,6 +30,12 @@ class DioCacheInterceptor extends Interceptor {
 
     final cacheOptions = _getCacheOptions(options);
 
+    // Add 304 as a valid status so onResponse flow is used when a 304 occurs
+    final optionValidateStatus = options.validateStatus;
+    options.validateStatus = (status) {
+      return optionValidateStatus(status) || status == 304;
+    };
+
     if (_shouldSkip(options, options: cacheOptions)) {
       handler.next(options);
       return;
@@ -81,6 +87,29 @@ class DioCacheInterceptor extends Interceptor {
     )) {
       handler.next(response);
       return;
+    }
+
+    // Check if cache response should be used instead of server response
+    if (response.statusCode == 304) {
+      // Retrieve response from cache
+      final existing = await _loadResponse(response.requestOptions);
+      // Transform CacheResponse to Response object
+      final cacheResponse = existing?.toResponse(response.requestOptions);
+
+      if (cacheResponse != null) {
+        // Update cache response with response header values
+        await _saveResponse(
+          cacheResponse..updateCacheHeaders(response),
+          cacheOptions,
+          statusCode: response.statusCode,
+        );
+      }
+
+      // Resolve with found cached response
+      if (cacheResponse != null) {
+        handler.next(cacheResponse);
+        return;
+      }
     }
 
     if (cacheOptions.policy == CachePolicy.noCache) {
